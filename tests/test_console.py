@@ -65,15 +65,41 @@ def test_run_console_returns_on_eof(monkeypatch, capsys):
     assert capsys.readouterr().out.endswith("\n")
 
 
-def test_run_console_propagates_api_failure(monkeypatch):
+def test_run_console_reports_agent_failure_and_continues(monkeypatch, capsys):
+    chat_client_error = _install_chat_client_exception(monkeypatch)
+    prompts = iter(["first", "second", "q"])
+    calls = []
+
+    async def run(prompt):
+        calls.append(prompt)
+        if prompt == "first":
+            raise chat_client_error("api-key=secret")
+        return "response"
+
+    monkeypatch.setattr(builtins, "input", lambda _: next(prompts))
+    monkeypatch.setattr(console, "load_config", lambda: _config())
+    monkeypatch.setattr(console, "_create_agent", lambda config: types.SimpleNamespace(run=run))
+
+    asyncio.run(console.run_console())
+
+    captured = capsys.readouterr()
+    assert calls == ["first", "second"]
+    assert console.AGENT_ERROR_MESSAGE in captured.err
+    assert "secret" not in captured.err
+    assert "Agent> response" in captured.out
+
+
+def test_run_console_propagates_unexpected_failure(monkeypatch):
+    _install_chat_client_exception(monkeypatch)
+
     async def run(_prompt):
-        raise RuntimeError("API unavailable")
+        raise RuntimeError("unexpected failure")
 
     monkeypatch.setattr(builtins, "input", lambda _: "hello")
     monkeypatch.setattr(console, "load_config", lambda: _config())
     monkeypatch.setattr(console, "_create_agent", lambda config: types.SimpleNamespace(run=run))
 
-    with pytest.raises(RuntimeError, match="API unavailable"):
+    with pytest.raises(RuntimeError, match="unexpected failure"):
         asyncio.run(console.run_console())
 
 
@@ -139,3 +165,15 @@ def test_create_agent_uses_azure_cli_credential_without_api_key(monkeypatch):
 
 async def _unexpected_run(_prompt):
     raise AssertionError("agent.run should not be called")
+
+
+def _install_chat_client_exception(monkeypatch):
+    class ChatClientException(Exception):
+        pass
+
+    framework = types.ModuleType("agent_framework")
+    exceptions = types.ModuleType("agent_framework.exceptions")
+    exceptions.ChatClientException = ChatClientException
+    monkeypatch.setitem(sys.modules, "agent_framework", framework)
+    monkeypatch.setitem(sys.modules, "agent_framework.exceptions", exceptions)
+    return ChatClientException

@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 from demo_ghc_app.config import AppConfig, ConfigError, load_config
 
 EXIT_COMMANDS = {"exit", "quit", "q"}
+AGENT_ERROR_MESSAGE = (
+    "Agent request failed. Check your Azure OpenAI access and network connection, "
+    "then try again."
+)
 
 
 def main() -> None:
@@ -41,8 +45,19 @@ async def run_console() -> None:
         if prompt.lower() in EXIT_COMMANDS:
             return
 
-        result = await agent.run(prompt)
+        try:
+            result = await agent.run(prompt)
+        except _agent_error_types():
+            print(AGENT_ERROR_MESSAGE, file=sys.stderr)
+            continue
+
         print(f"Agent> {result}")
+
+
+def _agent_error_types() -> tuple[type[Exception], ...]:
+    from agent_framework.exceptions import ChatClientException
+
+    return (ChatClientException,)
 
 
 def _create_agent(config: AppConfig):
